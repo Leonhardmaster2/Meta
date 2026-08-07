@@ -94,6 +94,9 @@ private:
   QWidget *make_range_row(meta::AbstractAttribute *p_attr);  ///< glm::vec2 + RangeBar
   QWidget *make_gradient_row(meta::AbstractAttribute *p_attr); ///< meta::ColorGradient
   QWidget *make_path_row(meta::AbstractAttribute *p_attr); ///< std::vector<glm::vec3>
+  QWidget *make_curve_row(meta::AbstractAttribute *p_attr); ///< std::vector<float>
+  QWidget *make_filename_row(meta::AbstractAttribute *p_attr); ///< filesystem::path
+  QWidget *make_linked_row(meta::AbstractAttribute *p_attr); ///< glm::vec2 + LinkedSliders
 
   /// Wrap a control under an uppercase label, the way the reference stacks a
   /// label above a rail. Takes ownership of `control`.

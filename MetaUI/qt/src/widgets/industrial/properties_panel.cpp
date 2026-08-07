@@ -15,7 +15,10 @@
 
 #include "meta_qt/widgets/industrial/check_row.hpp"
 #include "meta_qt/widgets/industrial/h_combo.hpp"
+#include "meta_qt/widgets/industrial/h_curve.hpp"
+#include "meta_qt/widgets/industrial/h_filename.hpp"
 #include "meta_qt/widgets/industrial/h_gradient.hpp"
+#include "meta_qt/widgets/industrial/h_linked_sliders.hpp"
 #include "meta_qt/widgets/industrial/h_path.hpp"
 #include "meta_qt/widgets/industrial/h_range.hpp"
 #include "meta_qt/widgets/industrial/param_slider.hpp"
@@ -183,6 +186,20 @@ QWidget *PropertiesPanel::make_row(meta::AbstractAttribute *p_attr)
 
   if (t == std::type_index(typeid(std::vector<glm::vec3>)))
     if (QWidget *w = this->make_path_row(p_attr))
+      return w;
+
+  if (t == std::type_index(typeid(std::vector<float>)))
+    if (QWidget *w = this->make_curve_row(p_attr))
+      return w;
+
+  if (t == std::type_index(typeid(std::filesystem::path)))
+    if (QWidget *w = this->make_filename_row(p_attr))
+      return w;
+
+  // The linked pair comes before the range row: both are glm::vec2 and each
+  // claims only its own widget_type.
+  if (t == std::type_index(typeid(glm::vec2)))
+    if (QWidget *w = this->make_linked_row(p_attr))
       return w;
 
   if (t == std::type_index(typeid(glm::vec2)))
@@ -597,6 +614,186 @@ QWidget *PropertiesPanel::make_path_row(meta::AbstractAttribute *p_attr)
 
   this->connect(row,
                 &HPath::edit_ended,
+                this,
+                [this, write_back]()
+                {
+                  write_back();
+                  this->flush_recompute();
+                  Q_EMIT this->edit_ended();
+                });
+
+  const std::string label = meta::common::label(*typed);
+  return label.empty() ? row
+                       : this->make_labeled(QString::fromStdString(label), row);
+}
+
+QWidget *PropertiesPanel::make_curve_row(meta::AbstractAttribute *p_attr)
+{
+  auto *typed = p_attr->try_cast<meta::Attribute<std::vector<float>>>();
+  if (!typed)
+    return nullptr;
+
+  const std::string widget_type = meta::common::try_get<std::string>(
+      *typed,
+      meta::keys::ui::widget_type,
+      std::string("CurveEditor"));
+
+  if (widget_type != "CurveEditor" && !widget_type.empty())
+    return nullptr;
+
+  auto to_qt = [](const std::vector<float> &in)
+  {
+    QVector<double> out;
+    out.reserve(static_cast<int>(in.size()));
+    for (const float v : in)
+      out.push_back(static_cast<double>(v));
+    return out;
+  };
+
+  auto *row = new HCurve(this);
+  row->set_bounds(meta::common::try_get<float>(*typed, meta::keys::ui::min_y, 0.f),
+                  meta::common::try_get<float>(*typed, meta::keys::ui::max_y, 1.f));
+  row->set_values(to_qt(typed->value()));
+
+  this->syncers_.push_back([row, typed, to_qt]()
+                           { row->set_values(to_qt(typed->value())); });
+
+  auto write_back = [row, typed]()
+  {
+    std::vector<float> out;
+    const auto         v = row->values();
+    out.reserve(static_cast<size_t>(v.size()));
+    for (const double d : v)
+      out.push_back(static_cast<float>(d));
+    typed->set_from_any(out);
+  };
+
+  this->connect(row,
+                &HCurve::value_changed,
+                this,
+                [this, write_back]()
+                {
+                  write_back();
+                  this->request_recompute();
+                });
+
+  this->connect(row,
+                &HCurve::edit_ended,
+                this,
+                [this, write_back]()
+                {
+                  write_back();
+                  this->flush_recompute();
+                  Q_EMIT this->edit_ended();
+                });
+
+  const std::string label = meta::common::label(*typed);
+  return label.empty() ? row
+                       : this->make_labeled(QString::fromStdString(label), row);
+}
+
+QWidget *PropertiesPanel::make_filename_row(meta::AbstractAttribute *p_attr)
+{
+  auto *typed = p_attr->try_cast<meta::Attribute<std::filesystem::path>>();
+  if (!typed)
+    return nullptr;
+
+  const std::string widget_type = meta::common::try_get<std::string>(
+      *typed,
+      meta::keys::ui::widget_type,
+      std::string("OpenFile"));
+
+  auto *row = new HFilename(this);
+
+  if (widget_type == "SaveFile")
+    row->set_mode(HFilename::Mode::Save);
+  else if (widget_type == "Directory")
+    row->set_mode(HFilename::Mode::Directory);
+  else
+    row->set_mode(HFilename::Mode::Open);
+
+  row->set_filter(QString::fromStdString(meta::common::file_filter(*typed)));
+  row->set_path(QString::fromStdString(typed->value().string()));
+
+  this->syncers_.push_back(
+      [row, typed]()
+      { row->set_path(QString::fromStdString(typed->value().string())); });
+
+  auto write_back = [row, typed]()
+  { typed->set_from_any(std::filesystem::path(row->path().toStdString())); };
+
+  this->connect(row,
+                &HFilename::edit_ended,
+                this,
+                [this, write_back]()
+                {
+                  write_back();
+                  this->flush_recompute();
+                  Q_EMIT this->edit_ended();
+                });
+
+  const std::string label = meta::common::label(*typed);
+  return label.empty() ? row
+                       : this->make_labeled(QString::fromStdString(label), row);
+}
+
+QWidget *PropertiesPanel::make_linked_row(meta::AbstractAttribute *p_attr)
+{
+  auto *typed = p_attr->try_cast<meta::Attribute<glm::vec2>>();
+  if (!typed)
+    return nullptr;
+
+  if (meta::common::try_get<std::string>(*typed,
+                                         meta::keys::ui::widget_type,
+                                         std::string{}) != "LinkedSliders")
+    return nullptr;
+
+  const float min = meta::common::min<float>(*typed);
+  float       max = meta::common::max<float>(*typed);
+
+  // Wavenumber is declared with FLT_MAX as its upper bound, which is not a
+  // rail anyone can aim with. Clamp the RAIL to something usable; typing into
+  // the value box still reaches the real ceiling.
+  if (!(max > min) || max > 1e6f)
+    max = std::max(min + 1.f, 64.f);
+
+  const float step = meta::common::step<float>(*typed);
+  const glm::vec2 v = typed->value();
+
+  auto *row = new HLinkedSliders(this);
+  row->set_range(min, max, step > 0.f ? step : (max - min) / 200.f);
+  row->set_decimals(
+      meta::common::try_get_format_decimals(meta::common::format(*typed)));
+  row->set_defaults(this->default_for(p_attr->name() + ".x", v.x),
+                    this->default_for(p_attr->name() + ".y", v.y));
+  row->set_values(v.x, v.y);
+  row->set_linked(
+      meta::common::try_get<bool>(*typed, meta::keys::ui::locked_xy, true));
+
+  this->syncers_.push_back(
+      [row, typed]()
+      {
+        const glm::vec2 cur = typed->value();
+        row->set_values(cur.x, cur.y);
+      });
+
+  auto write_back = [row, typed]()
+  {
+    typed->set_from_any(glm::vec2{static_cast<float>(row->x()),
+                                  static_cast<float>(row->y())});
+  };
+
+  this->connect(row,
+                &HLinkedSliders::value_changed,
+                this,
+                [this, write_back]()
+                {
+                  write_back();
+                  this->request_recompute();
+                });
+
+  this->connect(row,
+                &HLinkedSliders::edit_ended,
                 this,
                 [this, write_back]()
                 {
