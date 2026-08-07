@@ -15,6 +15,7 @@
 
 #include "meta_qt/widgets/industrial/check_row.hpp"
 #include "meta_qt/widgets/industrial/h_combo.hpp"
+#include "meta_qt/widgets/industrial/h_color.hpp"
 #include "meta_qt/widgets/industrial/h_curve.hpp"
 #include "meta_qt/widgets/industrial/h_filename.hpp"
 #include "meta_qt/widgets/industrial/h_gradient.hpp"
@@ -190,6 +191,10 @@ QWidget *PropertiesPanel::make_row(meta::AbstractAttribute *p_attr)
 
   if (t == std::type_index(typeid(std::vector<float>)))
     if (QWidget *w = this->make_curve_row(p_attr))
+      return w;
+
+  if (t == std::type_index(typeid(glm::vec4)))
+    if (QWidget *w = this->make_color_row(p_attr))
       return w;
 
   if (t == std::type_index(typeid(std::filesystem::path)))
@@ -614,6 +619,56 @@ QWidget *PropertiesPanel::make_path_row(meta::AbstractAttribute *p_attr)
 
   this->connect(row,
                 &HPath::edit_ended,
+                this,
+                [this, write_back]()
+                {
+                  write_back();
+                  this->flush_recompute();
+                  Q_EMIT this->edit_ended();
+                });
+
+  const std::string label = meta::common::label(*typed);
+  return label.empty() ? row
+                       : this->make_labeled(QString::fromStdString(label), row);
+}
+
+QWidget *PropertiesPanel::make_color_row(meta::AbstractAttribute *p_attr)
+{
+  auto *typed = p_attr->try_cast<meta::Attribute<glm::vec4>>();
+  if (!typed)
+    return nullptr;
+
+  const std::string widget_type = meta::common::try_get<std::string>(
+      *typed,
+      meta::keys::ui::widget_type,
+      std::string("ColorPicker"));
+
+  // glm::vec4 also carries plain 4-vectors; only the colour flavour belongs
+  // here, since the rest want four numbers rather than a swatch.
+  if (widget_type != "ColorPicker" && !widget_type.empty())
+    return nullptr;
+
+  auto *row = new HColor(this);
+
+  auto to_qt = [](const glm::vec4 &v)
+  { return QColor::fromRgbF(v.x, v.y, v.z, v.w); };
+
+  row->set_color(to_qt(typed->value()));
+
+  this->syncers_.push_back([row, typed, to_qt]()
+                           { row->set_color(to_qt(typed->value())); });
+
+  auto write_back = [row, typed]()
+  {
+    const QColor c = row->color();
+    typed->set_from_any(glm::vec4(static_cast<float>(c.redF()),
+                                  static_cast<float>(c.greenF()),
+                                  static_cast<float>(c.blueF()),
+                                  static_cast<float>(c.alphaF())));
+  };
+
+  this->connect(row,
+                &HColor::edit_ended,
                 this,
                 [this, write_back]()
                 {

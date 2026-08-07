@@ -26,11 +26,6 @@ namespace meta::qt
 namespace
 {
 
-/// Alpha checkerboard, so a partly transparent gradient reads as transparent
-/// instead of as a darker colour.
-const QColor kCheckA{"#2a2a2a"};
-const QColor kCheckB{"#343434"};
-
 const QString kUncategorised = "General";
 const QString kAllCategories = "All";
 
@@ -41,39 +36,6 @@ QColor lerp(const QColor &a, const QColor &b, double t)
                           a.greenF() + (b.greenF() - a.greenF()) * t,
                           a.blueF() + (b.blueF() - a.blueF()) * t,
                           a.alphaF() + (b.alphaF() - a.alphaF()) * t);
-}
-
-/**
- * @brief The checkerboard as a cached 2x2-cell tile.
- *
- * This used to be a nested loop of drawRect, which for the bar plus a full
- * preset grid ran to roughly a thousand calls on every single repaint - and a
- * repaint happens on every frame of the section collapse animation. One
- * tiled fillRect does the same job.
- */
-const QBrush &checker_brush()
-{
-  static const QBrush brush = []()
-  {
-    const int s = kGradientCheckSize;
-    QPixmap   tile(2 * s, 2 * s);
-    QPainter  p(&tile);
-    p.fillRect(tile.rect(), kCheckA);
-    p.fillRect(0, 0, s, s, kCheckB);
-    p.fillRect(s, s, s, s, kCheckB);
-    return QBrush(tile);
-  }();
-
-  return brush;
-}
-
-void paint_checkerboard(QPainter &p, const QRect &r)
-{
-  p.save();
-  // anchor the pattern to the rect rather than to the window origin
-  p.setBrushOrigin(r.topLeft());
-  p.fillRect(r, checker_brush());
-  p.restore();
 }
 
 void paint_gradient(QPainter &p, const QRect &r, const QVector<GradientStop> &stops)

@@ -3,12 +3,46 @@
  * with this software. */
 #include <iterator>
 
+#include <QBrush>
 #include <QFontDatabase>
+#include <QPainter>
+#include <QPixmap>
 
 #include "meta_qt/widgets/industrial/tokens.hpp"
 
 namespace meta::qt
 {
+
+namespace
+{
+const QColor kCheckA{"#2a2a2a"};
+const QColor kCheckB{"#343434"};
+
+const QBrush &checker_brush()
+{
+  static const QBrush brush = []()
+  {
+    const int s = kGradientCheckSize;
+    QPixmap   tile(2 * s, 2 * s);
+    QPainter  p(&tile);
+    p.fillRect(tile.rect(), kCheckA);
+    p.fillRect(0, 0, s, s, kCheckB);
+    p.fillRect(s, s, s, s, kCheckB);
+    return QBrush(tile);
+  }();
+
+  return brush;
+}
+} // namespace
+
+void paint_checkerboard(QPainter &p, const QRect &r)
+{
+  p.save();
+  // anchor the pattern to the rect rather than to the window origin
+  p.setBrushOrigin(r.topLeft());
+  p.fillRect(r, checker_brush());
+  p.restore();
+}
 
 Theme default_theme()
 {

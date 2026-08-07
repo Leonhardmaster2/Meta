@@ -25,7 +25,10 @@
  */
 #pragma once
 #include <QColor>
+#include <QRect>
 #include <QString>
+
+class QPainter;
 
 namespace meta::qt
 {
@@ -228,6 +231,16 @@ inline constexpr int kValuePx = 13;
 inline constexpr int kTitlePx = 12;
 inline constexpr int kIndexPx = 11;
 inline constexpr int kChipPx = 11;
+
+/**
+ * @brief Fill `r` with the alpha checkerboard.
+ *
+ * Anything that shows a colour with an alpha channel needs it, or a
+ * half-transparent colour just reads as a darker opaque one. Backed by a
+ * cached tile: as a nested drawRect loop this ran to roughly a thousand calls
+ * per repaint, on every frame of a collapse animation.
+ */
+void paint_checkerboard(QPainter &p, const QRect &r);
 
 /**
  * @brief A monospace family that actually exists on this machine.
