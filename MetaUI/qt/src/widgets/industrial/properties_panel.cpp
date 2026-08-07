@@ -16,6 +16,7 @@
 #include "meta_qt/widgets/industrial/check_row.hpp"
 #include "meta_qt/widgets/industrial/h_combo.hpp"
 #include "meta_qt/widgets/industrial/h_gradient.hpp"
+#include "meta_qt/widgets/industrial/h_path.hpp"
 #include "meta_qt/widgets/industrial/h_range.hpp"
 #include "meta_qt/widgets/industrial/param_slider.hpp"
 #include "meta_qt/widgets/industrial/pp_section.hpp"
@@ -178,6 +179,10 @@ QWidget *PropertiesPanel::make_row(meta::AbstractAttribute *p_attr)
 
   if (t == std::type_index(typeid(meta::ColorGradient)))
     if (QWidget *w = this->make_gradient_row(p_attr))
+      return w;
+
+  if (t == std::type_index(typeid(std::vector<glm::vec3>)))
+    if (QWidget *w = this->make_path_row(p_attr))
       return w;
 
   if (t == std::type_index(typeid(glm::vec2)))
@@ -515,6 +520,83 @@ QWidget *PropertiesPanel::make_gradient_row(meta::AbstractAttribute *p_attr)
 
   this->connect(row,
                 &HGradient::edit_ended,
+                this,
+                [this, write_back]()
+                {
+                  write_back();
+                  this->flush_recompute();
+                  Q_EMIT this->edit_ended();
+                });
+
+  const std::string label = meta::common::label(*typed);
+  return label.empty() ? row
+                       : this->make_labeled(QString::fromStdString(label), row);
+}
+
+QWidget *PropertiesPanel::make_path_row(meta::AbstractAttribute *p_attr)
+{
+  auto *typed = p_attr->try_cast<meta::Attribute<std::vector<glm::vec3>>>();
+  if (!typed)
+    return nullptr;
+
+  const std::string widget_type = meta::common::try_get<std::string>(
+      *typed,
+      meta::keys::ui::widget_type,
+      std::string("PointsEditor"));
+
+  // The same vector type also backs editors this widget does not implement;
+  // only the two point flavours belong here.
+  if (widget_type != "PointsEditor" && widget_type != "PathEditor" &&
+      !widget_type.empty())
+    return nullptr;
+
+  auto to_qt = [](const std::vector<glm::vec3> &in)
+  {
+    QVector<PathPoint> out;
+    out.reserve(static_cast<int>(in.size()));
+    for (const auto &p : in)
+      out.push_back({p.x, p.y, p.z});
+    return out;
+  };
+
+  auto *row = new HPath(this);
+
+  row->set_mode(widget_type == "PathEditor" ? HPath::Mode::Path
+                                            : HPath::Mode::Points);
+  row->set_bounds(meta::common::try_get<float>(*typed, meta::keys::ui::min_x, 0.f),
+                  meta::common::try_get<float>(*typed, meta::keys::ui::max_x, 1.f),
+                  meta::common::try_get<float>(*typed, meta::keys::ui::min_y, 0.f),
+                  meta::common::try_get<float>(*typed, meta::keys::ui::max_y, 1.f));
+  row->set_z_step(meta::common::try_get<float>(*typed, "ui.z_step", 0.05f));
+  row->set_closed(meta::common::try_get<bool>(*typed, meta::keys::ui::closed, false));
+  row->set_points(to_qt(typed->value()));
+
+  this->syncers_.push_back([row, typed, to_qt]()
+                           { row->set_points(to_qt(typed->value())); });
+
+  auto write_back = [row, typed]()
+  {
+    std::vector<glm::vec3> out;
+    const auto             pts = row->points();
+    out.reserve(static_cast<size_t>(pts.size()));
+    for (const auto &p : pts)
+      out.push_back(glm::vec3(static_cast<float>(p.x),
+                              static_cast<float>(p.y),
+                              static_cast<float>(p.z)));
+    typed->set_from_any(out);
+  };
+
+  this->connect(row,
+                &HPath::value_changed,
+                this,
+                [this, write_back]()
+                {
+                  write_back();
+                  this->request_recompute();
+                });
+
+  this->connect(row,
+                &HPath::edit_ended,
                 this,
                 [this, write_back]()
                 {

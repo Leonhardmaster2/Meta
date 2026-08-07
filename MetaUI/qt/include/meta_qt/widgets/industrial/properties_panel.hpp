@@ -93,6 +93,7 @@ private:
   QWidget *make_enum_row(meta::AbstractAttribute *p_attr);   ///< int + enum_items
   QWidget *make_range_row(meta::AbstractAttribute *p_attr);  ///< glm::vec2 + RangeBar
   QWidget *make_gradient_row(meta::AbstractAttribute *p_attr); ///< meta::ColorGradient
+  QWidget *make_path_row(meta::AbstractAttribute *p_attr); ///< std::vector<glm::vec3>
 
   /// Wrap a control under an uppercase label, the way the reference stacks a
   /// label above a rail. Takes ownership of `control`.
