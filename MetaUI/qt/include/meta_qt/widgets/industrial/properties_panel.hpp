@@ -67,6 +67,22 @@ public:
   /// Push model values into the widgets (after a preset load, reset, undo).
   void sync_from_model();
 
+  /**
+   * @brief Forward incremental edits, not just committed ones.
+   *
+   * value_changed drives a downstream recompute, and in a host like Hesiod
+   * that recompute runs synchronously on the GUI thread. Every one of them is
+   * therefore a freeze - and a drag pauses often enough to trigger several, so
+   * the rail stutters under the cursor.
+   *
+   * Off (the default), a drag emits nothing until it is released, and the
+   * recompute happens once. On, the panel behaves as before. Attributes that
+   * fall back to a stock widget always keep the debounced behaviour, because
+   * not all of them report a commit and they would otherwise never update.
+   */
+  void set_live_update(bool live);
+  bool live_update() const { return this->live_update_; }
+
   /// Number of attribute sections built. Callers appending their own section
   /// use this to continue the index and accent cycle.
   int section_count() const { return this->section_count_; }
@@ -117,7 +133,9 @@ private:
    * the animation stutter. Requests inside one window collapse into a single
    * update; flush_recompute() forces the trailing one.
    */
-  void request_recompute();
+  /// @param always Bypass the live-update setting. Used by fallback rows,
+  /// which cannot rely on reporting a commit.
+  void request_recompute(bool always = false);
   void flush_recompute();
 
   meta::AttributeContainer          *p_container_ = nullptr;
@@ -125,6 +143,7 @@ private:
   GradientPresetStore                preset_store_;
   QVBoxLayout                       *outer_ = nullptr;
   int                                section_count_ = 0;
+  bool                               live_update_ = false;
   QTimer                            *recompute_timer_ = nullptr;
   std::vector<std::function<void()>> syncers_;
   std::vector<meta::EventConnection> connections_;

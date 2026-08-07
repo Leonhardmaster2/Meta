@@ -49,8 +49,18 @@ PropertiesPanel::PropertiesPanel(meta::AttributeContainer  *p_container,
   this->build();
 }
 
-void PropertiesPanel::request_recompute()
+void PropertiesPanel::set_live_update(bool live) { this->live_update_ = live; }
+
+void PropertiesPanel::request_recompute(bool always)
 {
+  // With live update off, an incremental change is not forwarded at all. The
+  // debounce alone is not enough: it only waits for the drag to PAUSE, and a
+  // real drag pauses constantly, so each pause fired a synchronous recompute
+  // and the rail juddered under the cursor. The commit on release still goes
+  // through flush_recompute().
+  if (!this->live_update_ && !always)
+    return;
+
   // Debounce, not throttle: restarting on every event means a continuous drag
   // emits nothing until the user actually stops. Needed because not every Meta
   // fallback widget emits edit_ended - relying on that alone left some
@@ -240,9 +250,10 @@ QWidget *PropertiesPanel::make_row(meta::AbstractAttribute *p_attr)
                 this,
                 [this]()
                 {
-                  // Debounced: nothing fires until the drag pauses. edit_ended
-                  // still flushes immediately when the widget reports one.
-                  this->request_recompute();
+                  // Always debounced, even with live update off: not every
+                  // stock widget reports a commit, and those that do not would
+                  // otherwise never update at all.
+                  this->request_recompute(/* always */ true);
                 });
   this->connect(fallback,
                 &meta::qt::MetaWidget::edit_ended,
