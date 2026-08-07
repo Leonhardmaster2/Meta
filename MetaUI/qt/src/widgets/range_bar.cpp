@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include <QFontDatabase>
+#include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -173,7 +174,7 @@ void RangeBar::paintEvent(QPaintEvent *)
       const int   n = static_cast<int>(this->hist_y_.size());
       const float bw = static_cast<float>(r.width()) / static_cast<float>(n);
       QColor      c = this->palette().color(QPalette::Mid);
-      c.setAlpha(90);
+      c.setAlpha(60);
       painter.setPen(Qt::NoPen);
       painter.setBrush(c);
       for (int i = 0; i < n; ++i)
@@ -191,33 +192,42 @@ void RangeBar::paintEvent(QPaintEvent *)
   const int   lx = value_to_canvas(value_.x);
   const int   hx = value_to_canvas(value_.y);
 
-  // Track background
+  // Track well (recessed, dark)
   p.setPen(Qt::NoPen);
-  p.setBrush(palette().color(QPalette::Mid));
-  p.drawRoundedRect(tr, 3, 3);
+  p.setBrush(palette().color(QPalette::Base));
+  p.drawRoundedRect(tr, 2, 2);
 
-  // Filled section between handles
+  // Filled span between handles (data-viz blue-gray, reference HRange)
   if (hx > lx)
   {
-    QRect filled(lx, tr.top(), hx - lx, tr.height());
-    p.setBrush(palette().color(QPalette::Highlight).darker(110));
-    p.drawRect(filled);
+    QColor span = palette().color(QPalette::Link);
+    span.setAlpha(drag_handle_ != Handle::None ? 230 : 128);
+    p.setBrush(span);
+    p.drawRect(QRect(lx, tr.top(), hx - lx, tr.height()));
   }
 
-  // Track border
+  // Track hairline border
   p.setPen(QPen(palette().color(QPalette::Dark), 1));
   p.setBrush(Qt::NoBrush);
-  p.drawRoundedRect(tr, 3, 3);
+  p.drawRoundedRect(tr.adjusted(0, 0, -1, -1), 2, 2);
 
-  // Draw a handle: a rounded rectangle straddling the track vertically
+  // Machined metal handle straddling the track vertically
   auto draw_handle = [&](int x, bool hovered, bool dragged)
   {
-    const QRect hr(x - handle_w_, tr.top() - 3, handle_w_ * 2, tr.height() + 6);
-    p.setPen(QPen(palette().color(QPalette::Dark), 1));
-    p.setBrush(dragged   ? palette().color(QPalette::Highlight)
-               : hovered ? palette().color(QPalette::Light)
-                         : palette().color(QPalette::Button));
-    p.drawRoundedRect(hr, 3, 3);
+    const QRect hr(x - handle_w_,
+                   tr.center().y() - 8,
+                   handle_w_ * 2,
+                   16);
+    QLinearGradient g(hr.topLeft(), hr.bottomLeft());
+    g.setColorAt(0, QColor("#d6d6d6"));
+    g.setColorAt(1, QColor("#a8a8a8"));
+    p.setPen(QPen(QColor(dragged || hovered ? "#e08a2e" : "#1a1a1a"), 1));
+    p.setBrush(g);
+    p.drawRoundedRect(hr.adjusted(0, 0, -1, -1), 2, 2);
+    // centre notch
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor("#5f5f5f"));
+    p.drawRect(hr.center().x() - 1, hr.center().y() - 4, 2, 8);
   };
 
   draw_handle(lx, hovered_handle_ == Handle::Low, drag_handle_ == Handle::Low);
@@ -225,9 +235,10 @@ void RangeBar::paintEvent(QPaintEvent *)
               hovered_handle_ == Handle::High,
               drag_handle_ == Handle::High);
 
-  // Labels: low value left of low handle, high value right of high handle,
-  // span in the center of the filled section.
-  p.setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+  // Labels: low value left of low handle, high value right of high handle.
+  QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+  mono.setPixelSize(std::max(10, this->fontMetrics().height() - 5));
+  p.setFont(mono);
   p.setPen(palette().color(QPalette::Text));
 
   const QString lo_txt = QString::number(double(value_.x), 'f', decimals_);

@@ -73,6 +73,7 @@ private:
   bool is_minus_hovered = false;
   bool is_plus_hovered = false;
   bool is_bar_hovered = false;
+  bool is_box_hovered = false;
   bool force_edit_ended_emit = false;
 
   int   value_before_dragging = 0;
@@ -93,6 +94,7 @@ private:
   QRect rect_minus;
   QRect rect_plus;
   QRect rect_bar;
+  QRect rect_box; // value readout box (right side of the track row)
 
   // --- child widgets --------------------------------------------------------
   QLineEdit  *value_edit = nullptr;

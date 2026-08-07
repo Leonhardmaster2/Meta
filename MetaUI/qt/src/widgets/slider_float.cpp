@@ -8,8 +8,10 @@
 #include <random>
 
 #include <QApplication>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QHoverEvent>
+#include <QLinearGradient>
 #include <QMenu>
 #include <QPainter>
 
@@ -26,6 +28,16 @@ namespace
 // Smallest value considered by the log mapping, avoids log10(0) / negative
 // domain issues when vmin is 0 or slightly negative due to float error.
 constexpr float k_log_epsilon = 1e-6f;
+
+// Reference geometry (ParamSliderStacked): label row on top, 24px track zone
+// holding a 6px rail with a machined thumb, monospace value box on the right.
+constexpr int VALUE_BOX_W = 74;
+constexpr int VALUE_BOX_H = 24;
+constexpr int BOX_GAP = 12;
+constexpr int ZONE_H = 24;
+constexpr int RAIL_H = 6;
+constexpr int THUMB_W = 10;
+constexpr int THUMB_H = 18;
 } // namespace
 
 SliderFloat::SliderFloat(const std::string &label_,
@@ -56,19 +68,20 @@ SliderFloat::SliderFloat(const std::string &label_,
                 &SliderFloat::edit_ended,
                 [this]() { this->update_geometry(); });
 
-  // Derive stylesheet colours from the current palette so we respect dark/light
-  // themes.
+  // Inline editor style: recessed editing state (matches the reference value
+  // box: bg #161616, accent border while editing, monospace digits).
   const QPalette &pal = this->palette();
-  this->style_sheet = "background-color: " +
-                      pal.color(QPalette::Base).name().toStdString() +
-                      "; color: " +
-                      pal.color(QPalette::Text).name().toStdString() +
-                      "; border: 0px;"
-                      " selection-background-color: #ABABAB;";
+  const QString   accent = pal.color(QPalette::Highlight).name();
+  this->style_sheet =
+      "background-color: #161616; color: #ffffff; border: 1px solid " +
+      accent.toStdString() +
+      "; font-family: 'Consolas','Menlo',monospace;"
+      " selection-background-color: " +
+      accent.toStdString() + "; selection-color: #161616;";
 
   this->value_edit = new QLineEdit(this);
   this->value_edit->setVisible(false);
-  this->value_edit->setFixedHeight(this->height() - 2);
+  this->value_edit->setFixedHeight(VALUE_BOX_H - 4);
   this->value_edit->setAlignment(Qt::AlignCenter);
   this->value_edit->setStyleSheet(this->style_sheet.c_str());
   this->connect(this->value_edit,
@@ -102,6 +115,7 @@ bool SliderFloat::event(QEvent *event)
     this->is_minus_hovered = false;
     this->is_plus_hovered = false;
     this->is_bar_hovered = false;
+    this->is_box_hovered = false;
     this->update();
     this->setCursor(Qt::ArrowCursor);
     break;
@@ -113,8 +127,11 @@ bool SliderFloat::event(QEvent *event)
     this->is_minus_hovered = this->rect_minus.contains(pos);
     this->is_plus_hovered = this->rect_plus.contains(pos);
     this->is_bar_hovered = this->rect_bar.contains(pos);
+    this->is_box_hovered = this->rect_box.contains(pos);
     this->update();
-    this->setCursor(this->is_bar_hovered ? Qt::SizeHorCursor : Qt::ArrowCursor);
+    this->setCursor(this->is_bar_hovered   ? Qt::SizeHorCursor
+                    : this->is_box_hovered ? Qt::IBeamCursor
+                                           : Qt::ArrowCursor);
     break;
   }
 
@@ -194,10 +211,10 @@ void SliderFloat::mouseDoubleClickEvent(QMouseEvent *)
 {
   const bool is_bounded = this->is_range_bounded();
 
-  if (this->is_bar_hovered)
+  if (this->is_bar_hovered || this->is_box_hovered)
   {
     this->value_edit->setText(QString::number(this->value));
-    this->value_edit->setGeometry(this->rect_bar.adjusted(1, 1, -1, -1));
+    this->value_edit->setGeometry(this->rect_box.adjusted(2, 2, -2, -2));
     this->value_edit->setVisible(true);
     this->value_edit->setFocus();
     this->value_edit->selectAll();
@@ -307,6 +324,13 @@ void SliderFloat::mousePressEvent(QMouseEvent *event)
   {
     const bool is_bounded = this->is_range_bounded();
 
+    // Clicking the value box enters edit mode (reference interaction).
+    if (this->is_box_hovered)
+    {
+      this->mouseDoubleClickEvent(event);
+      return;
+    }
+
     if (this->is_bar_hovered)
     {
       this->value_before_dragging = this->value;
@@ -365,123 +389,123 @@ void SliderFloat::paintEvent(QPaintEvent *)
   p.setRenderHint(QPainter::Antialiasing);
 
   const QPalette &pal = this->palette();
-  const QColor    c_bg = pal.color(QPalette::Base);
-  const QColor    c_fill = pal.color(QPalette::Highlight);
-  const QColor    c_text = pal.color(QPalette::Text);
-  const QColor    c_border = pal.color(QPalette::Mid);
-  const QColor    c_hover = pal.color(QPalette::Highlight);
+  const QColor    c_well = pal.color(QPalette::Base);      // rail well
+  const QColor    c_rail = pal.color(QPalette::Dark);      // rail hairline
+  const QColor    c_fill = pal.color(QPalette::Highlight); // accent fill
+  const QColor    c_text = pal.color(QPalette::Text);      // default state
+  const QColor    c_modified = pal.color(QPalette::BrightText);
+  const QColor    c_border = pal.color(QPalette::Mid);     // value-box border
 
-  // Background + border
-  p.setBrush(c_bg);
-  p.setPen(QPen(this->is_hovered ? c_hover : c_border,
-                this->is_hovered ? this->style.border_width_hovered()
-                                 : this->style.border_width()));
-  p.drawRoundedRect(this->rect(),
-                    this->style.border_radius(),
-                    this->style.border_radius());
-
-  // Value fill bar when the range is bounded, drag handle when it is not. Both
-  // are drawn in the highlight colour and both define the region over which the
-  // label and value are drawn in HighlightedText, so `accent_rect` covers them.
   const bool is_editing = this->value_edit->isVisible();
-  const bool has_fill = this->is_range_bounded() && !is_editing;
-  const bool has_handle = !this->is_range_bounded() && !is_editing;
-  QRect      accent_rect;
+  const bool modified = std::abs(this->value - this->value_init) > 1e-4f;
+  const QColor c_label = modified ? c_modified : c_text;
 
-  if (has_fill)
+  QFontMetrics fm(this->font());
+  const int label_h = fm.height();
+
+  // --- label row (uppercase, state encoded by colour only)
+  p.setFont(this->font());
+  p.setPen(c_label);
+  p.drawText(QRect(0, 0, this->width(), label_h),
+             Qt::AlignLeft | Qt::AlignVCenter,
+             QString::fromStdString(this->label).toUpper());
+
+  // --- rail well (6px, recessed)
+  const QRect zone = this->rect_bar;
+  const QRect rail(0,
+                   zone.center().y() - RAIL_H / 2,
+                   zone.width(),
+                   RAIL_H);
+  p.setPen(QPen(c_rail, 1));
+  p.setBrush(c_well);
+  p.drawRoundedRect(rail.adjusted(0, 0, -1, -1), 1, 1);
+
+  // Machined metal thumb shared by the bounded and unbounded variants.
+  auto draw_thumb = [&](int x, int cy)
   {
-    const float r = this->value_to_ratio(this->value);
-    const int   rcut = int((1.f - r) * float(this->rect_bar.width()));
-
-    accent_rect = this->rect_bar.adjusted(1, 1, -rcut - 1, -1);
-
-    p.setBrush(c_fill.darker(130));
+    const QRect t(x, cy - THUMB_H / 2, THUMB_W, THUMB_H);
+    QLinearGradient g(t.topLeft(), t.bottomLeft());
+    g.setColorAt(0, QColor("#d6d6d6"));
+    g.setColorAt(1, QColor("#a8a8a8"));
+    p.setPen(QPen(QColor("#1a1a1a"), 1));
+    p.setBrush(g);
+    p.drawRoundedRect(t.adjusted(0, 0, -1, -1), 2, 2);
+    // centre notch
     p.setPen(Qt::NoPen);
+    p.setBrush(QColor("#5f5f5f"));
+    p.drawRect(t.center().x() - 1, t.center().y() - 4, 2, 8);
+  };
 
-    if (this->add_plus_minus_buttons)
-      p.drawRect(accent_rect);
-    else
-      p.drawRoundedRect(accent_rect,
-                        this->style.border_radius(),
-                        this->style.border_radius());
-  }
-  else if (has_handle)
+  if (!is_editing)
   {
-    accent_rect = this->handle_rect();
-
-    // While dragging, mark the rest position the handle will snap back to.
-    if (this->is_dragging)
+    if (this->is_range_bounded())
     {
-      const int x_mid = this->rect_bar.center().x();
-      p.setPen(QPen(c_border, this->style.border_width()));
-      p.drawLine(QPoint(x_mid, this->rect_bar.top() + 3),
-                 QPoint(x_mid, this->rect_bar.bottom() - 3));
-    }
+      // Accent fill (always the accent, ~0.9 opacity).
+      const float r = this->value_to_ratio(this->value);
+      QRect       fill = rail.adjusted(1, 1, -1, -1);
+      fill.setWidth(std::max(0, int(r * float(fill.width()))));
+      QColor fill_c = c_fill;
+      fill_c.setAlpha(230);
+      p.setPen(Qt::NoPen);
+      p.setBrush(fill_c);
+      p.drawRoundedRect(fill, 1, 1);
 
-    p.setBrush(c_fill.darker(this->is_dragging ? 110 : 130));
-    p.setPen(Qt::NoPen);
-    p.drawRoundedRect(accent_rect,
-                      this->style.border_radius(),
-                      this->style.border_radius());
+      draw_thumb(int(std::clamp(r, 0.f, 1.f) *
+                       float(std::max(zone.width() - THUMB_W, 0))),
+                 rail.center().y());
+    }
+    else
+    {
+      // Unbounded: drag handle following the motion, centred at rest.
+      if (this->is_dragging)
+      {
+        const int x_mid = zone.center().x();
+        p.setPen(QPen(c_border, 1));
+        p.drawLine(QPoint(x_mid, zone.top() + 3), QPoint(x_mid, zone.bottom() - 3));
+      }
+      draw_thumb(this->handle_rect().center().x() - THUMB_W / 2,
+                 rail.center().y());
+    }
   }
 
-  // +/- button separators
+  // --- value box (right side, monospace readout)
+  const QRect box = this->rect_box;
+  QColor      box_bg = c_well.lighter(115); // ≈ #1f1f1f over the #1c1c1c well
+  QColor      box_border = c_border;
+  if (is_editing)
+    box_border = c_fill;
+  else if (this->is_box_hovered)
+  {
+    box_bg = c_well.lighter(140); // ≈ #262626
+    box_border = c_border.lighter(120);
+  }
+  p.setPen(QPen(box_border, 1));
+  p.setBrush(box_bg);
+  p.drawRoundedRect(box.adjusted(0, 0, -1, -1), 2, 2);
+
+  if (!is_editing)
+  {
+    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    mono.setPixelSize(std::max(11, label_h - 3));
+    p.setFont(mono);
+    p.setPen(c_label);
+    p.drawText(box.adjusted(8, 0, -6, 0),
+               Qt::AlignLeft | Qt::AlignVCenter,
+               QString::fromStdString(this->get_value_as_string()));
+  }
+
+  // ◁/▶ step buttons (only when enabled)
   if (this->add_plus_minus_buttons)
   {
-    p.setPen(QPen(c_border, this->style.border_width()));
-    p.drawLine(QPoint(this->rect_minus.right() + 1, this->rect().top()),
-               QPoint(this->rect_minus.right() + 1, this->rect().bottom()));
-    p.drawLine(QPoint(this->rect_plus.left() - 1, this->rect().top()),
-               QPoint(this->rect_plus.left() - 1, this->rect().bottom()));
-  }
-
-  // Label (left) and value (right) inside the bar
-  const QRect   label_rect = this->rect_bar.adjusted(this->base_dx,
-                                                   0,
-                                                   -this->base_dx,
-                                                   0);
-  const QString label_str = QString::fromStdString(this->label);
-  const QString value_str = QString::fromStdString(this->get_value_as_string());
-
-  if (has_fill || has_handle)
-  {
-    // Two-pass draw: text over the highlighted fill or handle uses
-    // HighlightedText for contrast, text over the plain background uses
-    // Text. The two clip regions are complementary (bar minus accent /
-    // accent), so nothing is drawn twice.
-    const QColor c_highlighted_text = pal.color(QPalette::HighlightedText);
-
-    p.save();
-    p.setClipRect(accent_rect);
-    p.setBrush(c_highlighted_text);
-    p.setPen(c_highlighted_text);
-    p.drawText(label_rect, Qt::AlignLeft | Qt::AlignVCenter, label_str);
-    p.drawText(label_rect, Qt::AlignRight | Qt::AlignVCenter, value_str);
-    p.restore();
-
-    p.save();
-    p.setClipRegion(QRegion(this->rect_bar).subtracted(QRegion(accent_rect)));
-    p.setBrush(c_text);
+    p.setFont(this->font());
     p.setPen(c_text);
-    p.drawText(label_rect, Qt::AlignLeft | Qt::AlignVCenter, label_str);
-    p.drawText(label_rect, Qt::AlignRight | Qt::AlignVCenter, value_str);
-    p.restore();
+    p.drawText(this->rect_minus,
+               Qt::AlignCenter | Qt::AlignVCenter,
+               this->is_minus_hovered ? "◀" : "◁");
+    p.drawText(this->rect_plus,
+               Qt::AlignCenter | Qt::AlignVCenter,
+               this->is_plus_hovered ? "▶" : "▷");
   }
-  else
-  {
-    p.setBrush(c_text);
-    p.setPen(c_text);
-    p.drawText(label_rect, Qt::AlignLeft | Qt::AlignVCenter, label_str);
-    p.drawText(label_rect, Qt::AlignRight | Qt::AlignVCenter, value_str);
-  }
-
-  // ◁/▶ arrows
-  p.drawText(this->rect_minus,
-             Qt::AlignCenter | Qt::AlignVCenter,
-             this->is_minus_hovered ? "◀" : "◁");
-  p.drawText(this->rect_plus,
-             Qt::AlignCenter | Qt::AlignVCenter,
-             this->is_plus_hovered ? "▶" : "▷");
 }
 
 void SliderFloat::resizeEvent(QResizeEvent *event)
@@ -526,7 +550,12 @@ void SliderFloat::update_geometry()
 {
   QFontMetrics fm(this->font());
   this->base_dx = fm.horizontalAdvance(QString("M"));
-  this->base_dy = fm.height() + this->style.vertical_spacing();
+
+  // Stacked layout: label row on top, then the 24px track zone; the value box
+  // sits at the right of the track zone.
+  const int label_h = fm.height();
+  const int track_y = label_h + 6;
+  this->base_dy = track_y + ZONE_H + 4;
 
   const int label_w = helpers::text_width(this, this->label);
   this->slider_width = label_w + this->style.horizontal_spacing() +
@@ -542,25 +571,29 @@ void SliderFloat::update_geometry()
   this->setMinimumHeight(this->sizeHint().height());
   this->setMaximumHeight(this->sizeHint().height());
 
+  const int gap = this->add_plus_minus_buttons ? 2 * this->base_dx : 0;
+
+  this->rect_bar = QRect(gap,
+                         track_y,
+                         std::max(this->width() - gap * 2 - BOX_GAP - VALUE_BOX_W,
+                                  40),
+                         ZONE_H);
+
+  this->rect_box = QRect(this->width() - VALUE_BOX_W, track_y, VALUE_BOX_W, ZONE_H);
+
   if (this->add_plus_minus_buttons)
   {
-    this->rect_minus = this->rect();
-    this->rect_minus.setWidth(2 * this->base_dx);
-
-    this->rect_plus = this->rect().adjusted(this->rect().width() -
-                                                2 * this->base_dx,
-                                            0,
-                                            0,
-                                            0);
+    this->rect_minus = QRect(0, track_y, 2 * this->base_dx, ZONE_H);
+    this->rect_plus = QRect(this->rect_bar.right() - 2 * this->base_dx + 1,
+                            track_y,
+                            2 * this->base_dx,
+                            ZONE_H);
   }
   else
   {
     this->rect_minus = QRect();
     this->rect_plus = QRect();
   }
-
-  const int gap = this->add_plus_minus_buttons ? 2 * this->base_dx : 0;
-  this->rect_bar = this->rect().adjusted(gap, 0, -gap, 0);
 }
 
 } // namespace meta::qt
